@@ -4,7 +4,8 @@
 /*****************  feature options *******************/
 
 #define PROFILING_ENABLE
-//#define SAMPLER_CHECK_TIMER
+#define SAMPLER_CHECK_TIMER
+//#define CONTROL_CHECK_TIMER
 
 /******************  clock frequency ******************/
 
@@ -12,14 +13,14 @@
 
 /******************  GPIO allocation  *****************/
 
-#define GPIO_ONBOARD_LED      2                 // GPIO[2]
+#define GPIO_ONBOARD_LED      2                  // GPIO[2]
 
-#define GPIO_DEBUG_OUT        13                // GPIO[13]
+#define GPIO_DEBUG_OUT        13                 // GPIO[13]
 
-#define PORT_MODE_MASK        0xF0000           // GPIO[16:19]
+#define PORT_MODE_MASK        0xF0000            // GPIO[16:19]
 #define PORT_MODE_SHIFT       16
 
-#define GPIO_PWM_OUT          23                // GPIO[23]
+#define GPIO_PWM_OUT          23                 // GPIO[23]
 
 #define ADC_CH_KNOB1          ADC1_CHANNEL_6     // GPIO[34]
 #define ADC_CH_KNOB2          ADC1_CHANNEL_7     // GPIO[35]
@@ -30,27 +31,34 @@
 #define TIMER_GRP_SAMPLER    TIMER_GROUP_0
 #define TIMER_IDX_SAMPLER    TIMER_0
 
+#define TIMER_GRP_CONTROL    TIMER_GROUP_1
+#define TIMER_IDX_CONTROL    TIMER_0
+
 
 /******************  ADC configuration  *****************/
 
 #define ADC_RESOLUTION        ADC_WIDTH_BIT_12
 
 #define ADC_ATTEN_SAMPLER     ADC_ATTEN_DB_11
+#define ADC_ATTEN_KNOB        ADC_ATTEN_DB_11
 
 /************  controller configuration  ************/
 
 #define CONTROL_TIMER_FREQ 1000000UL
-#define CONTROL_SAMPLE_FREQ 4
+#define CONTROL_KNOB_UPDATE_FREQ 20
+#define CONTROL_AUDIO_UPDATE_FREQ 4
+#define CONTROL_TASK_PRIORITY 2
 #define CONTROL_TASK_CORE 0
-#define CONTROL_TASK_STACK_SIZE 8192
+#define CONTROL_TASK_STACK_SIZE 4096
 
 /************  audio sampler configuration  ************/
 
 #define SAMPLER_TIMER_FREQ 1000000UL
 #define SAMPLER_SAMPLE_FREQ 2000UL
+#define SAMPLER_TASK_PRIORITY 1
 #define SAMPLER_FFT_SIZE 256UL
 #define SAMPLER_TASK_CORE 0
-#define SAMPLER_TASK_STACK_SIZE 8192
+#define SAMPLER_TASK_STACK_SIZE 4096
 
 
 /************  mode sampler configuration  ************/
