@@ -7,7 +7,9 @@ struct fft_analysis_t
     uint16_t max_smpl;
     float avg_smpl;
     float energy;
+    float min_mag;
     float max_mag;
+    float avg_mag;
     float max_bin_freq;
     float max_est_freq;
 };

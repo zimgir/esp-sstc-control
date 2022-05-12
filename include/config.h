@@ -1,10 +1,10 @@
 #ifndef __CONFIG_H__
 #define __CONFIG_H__
 
-/*****************  feature options *******************/
+/*****************  debug options *******************/
 
-#define PROFILING_ENABLE
-#define SAMPLER_CHECK_TIMER
+//#define PROFILING_ENABLE
+//#define SAMPLER_CHECK_TIMER
 //#define CONTROL_CHECK_TIMER
 
 /******************  clock frequency ******************/
@@ -44,22 +44,36 @@
 
 /************  controller configuration  ************/
 
+#define CONTROL_TASK_CORE 0
+#define CONTROL_TASK_PRIORITY 1
+#define CONTROL_TASK_STACK_SIZE 4096
+
 #define CONTROL_TIMER_FREQ 1000000UL
 #define CONTROL_KNOB_UPDATE_FREQ 20
-#define CONTROL_AUDIO_UPDATE_FREQ 4
-#define CONTROL_TASK_PRIORITY 2
-#define CONTROL_TASK_CORE 0
-#define CONTROL_TASK_STACK_SIZE 4096
+
+#define CONTROL_ON_STEP_ENERGY 1.3f
+#define CONTROL_ON_STEP_STANDOUT 1.4f
+
+#define CONTROL_OFF_STEP_ENERGY 0.7f
+#define CONTROL_OFF_STEP_STANDOUT 0.7f
+
+#define CONTROL_MOVING_AVERAGE_SIZE 8
+
+#define CONTROL_AUDIO_UPDATE_FREQ 8
+
+#define CONTROL_CONFIDENCE_STEP_COUNT 1
+#define CONTROL_CONFIDENCE_FREQ_LIMIT 4
 
 /************  audio sampler configuration  ************/
 
-#define SAMPLER_TIMER_FREQ 1000000UL
-#define SAMPLER_SAMPLE_FREQ 2000UL
+#define SAMPLER_TASK_CORE 1
 #define SAMPLER_TASK_PRIORITY 1
-#define SAMPLER_FFT_SIZE 256UL
-#define SAMPLER_TASK_CORE 0
 #define SAMPLER_TASK_STACK_SIZE 4096
 
+#define SAMPLER_FFT_SIZE 256UL
+#define SAMPLER_TIMER_FREQ 1000000UL
+// should be around 2kHz
+#define SAMPLER_SAMPLE_FREQ (CONTROL_AUDIO_UPDATE_FREQ * SAMPLER_FFT_SIZE) 
 
 /************  mode sampler configuration  ************/
 

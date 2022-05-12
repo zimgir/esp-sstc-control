@@ -27,8 +27,8 @@ static fft_callback_t __fft_callback;
 
 static TaskHandle_t DRAM_ATTR __sampler_task;
 
-static volatile std::atomic<uint32_t> __enable_flag;
-static volatile std::atomic<uint32_t> __proc_flag;
+static volatile std::atomic<uint32_t> DRAM_ATTR __enable_flag;
+static volatile std::atomic<uint32_t> DRAM_ATTR __proc_flag;
 
 #if (SAMPLER_FFT_SIZE == 256)
 static DMA_ATTR float __fft_hanning_buffer[SAMPLER_FFT_SIZE / 2] = // half buffer because of window symmetry
@@ -154,9 +154,11 @@ static void __fft_process(fft_analysis_t *analysis)
     // normalize energy value
     analysis->energy = analysis->energy / SAMPLER_FFT_SIZE;
 
-    // find max frequency peak between edge values
+    // find max (magnitude, frequency) peak between edge values
 
-    analysis->max_mag = 0;
+    analysis->min_mag = __fft_output_buffer[2];
+    analysis->max_mag = __fft_output_buffer[2];
+    analysis->avg_mag = 0;
     max_mag_idx = 0;
 
     for (i = 2; i < (SAMPLER_FFT_SIZE - 2); i += 2)
@@ -166,12 +168,22 @@ static void __fft_process(fft_analysis_t *analysis)
             analysis->max_mag = __fft_output_buffer[i];
             max_mag_idx = i / 2;
         }
+
+        if (__fft_output_buffer[i] < analysis->min_mag)
+        {
+            analysis->min_mag = __fft_output_buffer[i];
+        }
+
+        analysis->avg_mag += __fft_output_buffer[i];
     }
+
+    analysis->avg_mag /= (SAMPLER_FFT_SIZE - 2);
 
     idx = max_mag_idx * 2;
 
     analysis->max_bin_freq = max_mag_idx * SAMPLER_SAMPLE_FREQ / SAMPLER_FFT_SIZE;
 
+    // frequecy peak estimation math magic
     delta = 0.5 * ((__fft_output_buffer[idx - 2] - __fft_output_buffer[idx + 2]) /
                    (__fft_output_buffer[idx - 2] - (2.0 * __fft_output_buffer[idx]) + __fft_output_buffer[idx + 2]));
 
@@ -206,7 +218,7 @@ static void __sampler_task_init(void)
 
 static void TASK_sampler_main(void *param)
 {
-    uint32_t notify_count;
+    uint32_t sampler_count;
     fft_analysis_t analysis;
 
     __sampler_task_init();
@@ -214,10 +226,12 @@ static void TASK_sampler_main(void *param)
     while (1)
     {
         // sleep until notified for double buffer switch or for 1 sec
-        PROFILE_OP(notify_count = ulTaskNotifyTake(pdFALSE, pdMS_TO_TICKS(1000)));
+        PROFILE_OP(sampler_count = ulTaskNotifyTake(pdFALSE, pdMS_TO_TICKS(1000)));
 
-        if (notify_count == 0)
-            continue; // wait timeout no actual notifications
+        if (sampler_count == 0)
+        { // wait timeout no actual notifications
+            continue; 
+        }
 
         if (__proc_flag.load())
         {

@@ -19,12 +19,12 @@ void loop()
 {
   PORT_GET0(mode, PORT_MODE_MASK, PORT_MODE_SHIFT);
 
-  LOG("sampled mode: %d\n", mode);
+  //LOG("sampled mode: %d\n", mode);
 
 #if 0
   if (mode != control_get_mode())
     control_set_mode((control_mode_t)mode);
 #endif
 
-  PROFILE_OP(delay(MODE_SAMPLE_DELAY));
+  delay(MODE_SAMPLE_DELAY);
 }
