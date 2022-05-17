@@ -56,9 +56,11 @@
         LOG("%s average %lld us\n", #operation, tt / times);          \
     }
 #else
-#define PROFILE_OP(operation)
-#define PROFILE_OP_TIMES(operation, times)
+#define PROFILE_OP(operation) operation
+#define PROFILE_OP_TIMES(operation, times) operation
 #endif
+
+#define ARRAY_SIZE(arr) (sizeof(arr) / sizeof(arr[0]))
 
 #define RAW_REG(addr) (volatile uint32_t *)(addr)
 #define NUM2BIT(num) (1UL << num)
