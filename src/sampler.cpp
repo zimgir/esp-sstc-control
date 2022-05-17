@@ -51,7 +51,7 @@ static DMA_ATTR float __fft_hanning_buffer[SAMPLER_FFT_SIZE / 2] = // half buffe
      0.99149, 0.99360, 0.99542, 0.99693, 0.99814, 0.99905, 0.99966, 0.99996};
 #endif
 
-static bool IRAM_ATTR ISR_timer_sample(void *)
+static bool IRAM_ATTR ISR_timer_sample(void *arg)
 {
     uint16_t sample;
     BaseType_t task_awake = pdFALSE;
@@ -230,13 +230,13 @@ static void TASK_sampler_main(void *param)
 
         if (__enable_flag.load())
         {
-            // if timer is not runnig start it here
+            // if timer is not running start it here
             if (!timer_is_counting(TIMER_GRP_SAMPLER, TIMER_IDX_SAMPLER))
-                timer_start(TIMER_GRP_SAMPLER, TIMER_IDX_SAMPLER);
+                ESP_ERROR_CHECK(timer_start(TIMER_GRP_SAMPLER, TIMER_IDX_SAMPLER));
         }
         else
         {
-            timer_pause(TIMER_GRP_SAMPLER, TIMER_IDX_SAMPLER);
+            ESP_ERROR_CHECK(timer_pause(TIMER_GRP_SAMPLER, TIMER_IDX_SAMPLER));
             __sample_index = 0;
         }
     }
@@ -253,8 +253,7 @@ void sampler_init(fft_callback_t callback)
     __proc_flag.store(0);
     __enable_flag.store(0);
     
-    // sampler task will run on the 2nd core
-    ret = xTaskCreatePinnedToCore(TASK_sampler_main, "SAMPLER", SAMPLER_TASK_STACK_SIZE, NULL, 1, &__sampler_task, SAMPLER_TASK_CORE);
+    ret = xTaskCreatePinnedToCore(TASK_sampler_main, "SAMPLER", SAMPLER_TASK_STACK_SIZE, NULL, SAMPLER_TASK_PRIORITY, &__sampler_task, SAMPLER_TASK_CORE);
 
     BUG(ret != pdPASS);
 }
