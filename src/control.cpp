@@ -18,21 +18,31 @@ static volatile std::atomic<uint32_t> DRAM_ATTR __out_flag;
 static volatile std::atomic<control_mode_t> DRAM_ATTR __set_mode;
 static volatile std::atomic<control_mode_t> DRAM_ATTR __cur_mode;
 
-static MovingAverage<float, CONTROL_MOVING_AVERAGE_SIZE> DRAM_ATTR __avg_energy;
-static MovingAverage<float, CONTROL_MOVING_AVERAGE_SIZE> DRAM_ATTR __avg_standout;
+static MovingAverage<float, CONTROL_MOVING_AVERAGE_SIZE> DRAM_ATTR __avg_off_energy;
+static MovingAverage<float, CONTROL_MOVING_AVERAGE_SIZE> DRAM_ATTR __avg_off_standout;
 
+static MovingAverage<float, CONTROL_MOVING_AVERAGE_SIZE> DRAM_ATTR __avg_on_energy;
+static MovingAverage<float, CONTROL_MOVING_AVERAGE_SIZE> DRAM_ATTR __avg_on_standout;
+
+static float __prev_freq;
 static uint32_t __step_count;
-static uint32_t __step_freq[CONTROL_CONFIDENCE_STEP_COUNT] = {0};
 
 static uint32_t __get_power_knob_val()
 {
     // TODO
-    return 0;
+    return 2048;
+}
+
+static uint32_t __get_freqency_knob_val()
+{
+    // TODO
+    return 3480; // ~ 0.85
 }
 
 static bool IRAM_ATTR ISR_timer_control(void *arg)
 {
-    uint16_t sample;
+    uint32_t power;
+    uint32_t frequency;
     BaseType_t task_awake = pdFALSE;
 
 #ifdef CONTROL_CHECK_TIMER
@@ -44,6 +54,12 @@ static bool IRAM_ATTR ISR_timer_control(void *arg)
     state = ~state;
 #endif
 
+    power = __get_power_knob_val();
+
+    frequency = CONTROL_MAX_OUTPUT_FREQ * __get_freqency_knob_val() / ADC_MAX_VAL;
+
+    __pwrfrq.store(PWRFRQ_VAL(power, frequency));
+
     // signal output event
     __out_flag.store(1);
 
@@ -53,118 +69,169 @@ static bool IRAM_ATTR ISR_timer_control(void *arg)
     return task_awake == pdTRUE;
 }
 
+static int __is_persistent_freq(float new_freq)
+{
+    int i;
+
+    if (new_freq < (__prev_freq - CONTROL_PERSISTENT_FREQ_LIMIT) ||
+        new_freq > (__prev_freq + CONTROL_PERSISTENT_FREQ_LIMIT))
+        return 0;
+
+    return 1;
+}
+
 // executed by the ther core in sampler task context
 // time sensitive - must finish before next fft buffer is filled by sampler
 static void __fft_callback(struct fft_analysis_t *analysis)
 {
-    int i;
     float standout;
     float energy_step;
     float standout_step;
+    float step_score;
+
+    int freq_peresist;
+
+    float on_threshold;
+    float off_threshold;
 
     uint32_t cur_pwrfrq;
     uint32_t new_pwrfrq;
+
     standout = analysis->max_mag - analysis->avg_mag;
-
-    // handle initial case
-    if (unlikely(__avg_energy.num() == 0))
-    {
-        BUG(__avg_standout.num() != 0);
-        __avg_energy.add(analysis->energy);
-        __avg_standout.add(standout);
-    }
-
-    // __avg_energy.value() != 0 (unexpected bug othewise)
-    energy_step = analysis->energy / __avg_energy.value();
-
-    // __avg_standout.value() != 0 (unexpected bug othewise)
-    standout_step = standout / __avg_standout.value();
 
     cur_pwrfrq = __pwrfrq.load();
     new_pwrfrq = cur_pwrfrq;
 
     if (cur_pwrfrq != 0)
     { // ON state
-        if (energy_step <= CONTROL_OFF_STEP_ENERGY && standout_step <= CONTROL_OFF_STEP_STANDOUT)
+
+        if (unlikely(__avg_on_energy.num() == 0))
+        {
+            BUG(__avg_on_standout.num() != 0);
+            __avg_on_energy.add(analysis->energy);
+            __avg_on_standout.add(standout);
+        }
+
+        // __avg_energy.value() != 0 (unexpected bug othewise)
+        energy_step = analysis->energy / __avg_on_energy.value();
+
+        // __avg_standout.value() != 0 (unexpected bug othewise)
+        standout_step = standout / __avg_on_standout.value();
+
+        freq_peresist = __is_persistent_freq(analysis->max_est_freq);
+
+        step_score = CONTROL_WEIGHT_ENERGY * energy_step + CONTROL_WEIGHT_STANDOUT * standout_step;
+
+        step_score = freq_peresist ? step_score * CONTROL_MULTILIER_PERSIST : step_score;
+
+        off_threshold = CONTROL_SCORE_OFF_TH_BASE +
+                        CONTROL_SCORE_OFF_TH_VAR * ((float)__get_freqency_knob_val() / ADC_MAX_VAL);
+
+        if (step_score < off_threshold)
         { // OFF condition immediately without confidence steps
 
-            __avg_energy.reset();
-            __avg_standout.reset();
-
             new_pwrfrq = 0;
+            __avg_off_energy.add(analysis->energy);
+            __avg_off_standout.add(standout);
         }
         else
         { // update frequency with confidence steps
 
-            if (__step_freq_persistent((uint32_t)analysis->max_est_freq))
+            if (freq_peresist)
             {
-                if (__step_count == CONTROL_CONFIDENCE_STEP_COUNT)
+                if (__step_count >= CONTROL_CONFIDENCE_STEP_COUNT)
                 {
                     new_pwrfrq = PWRFRQ_VAL(__get_power_knob_val(), (uint32_t)analysis->max_est_freq);
-
-                    __step_count = 0;
-                } 
+                }
                 else
                 {
-                    __step_freq[__step_count++] = (uint32_t)analysis->max_est_freq;
+                    __step_count++;
                 }
             }
             else
             {
-                __step_count = 0;
+                // reset and increment
+                __step_count = 1;
             }
-        }
 
-        __avg_energy.add(analysis->energy);
-        __avg_standout.add(standout);
+            __avg_on_energy.add(analysis->energy);
+            __avg_on_standout.add(standout);
+        }
     }
     else
     { // OFF state
-        if (energy_step >= CONTROL_ON_STEP_ENERGY && standout_step >= CONTROL_ON_STEP_STANDOUT)
+
+        // handle initial case
+        if (unlikely(__avg_off_energy.num() == 0))
+        {
+            BUG(__avg_off_standout.num() != 0);
+            __avg_off_energy.add(analysis->energy);
+            __avg_off_standout.add(standout);
+        }
+
+        // __avg_energy.value() != 0 (unexpected bug othewise)
+        energy_step = analysis->energy / __avg_off_energy.value();
+
+        // __avg_standout.value() != 0 (unexpected bug othewise)
+        standout_step = standout / __avg_off_standout.value();
+
+        freq_peresist = __is_persistent_freq((uint32_t)analysis->max_est_freq);
+
+        step_score = CONTROL_WEIGHT_ENERGY * energy_step + CONTROL_WEIGHT_STANDOUT * standout_step;
+
+        step_score = freq_peresist ? step_score * CONTROL_MULTILIER_PERSIST : step_score;
+
+        on_threshold = CONTROL_SCORE_ON_TH_BASE -
+                       CONTROL_SCORE_ON_TH_VAR * ((float)__get_freqency_knob_val() / ADC_MAX_VAL);
+
+        if (step_score >= on_threshold)
         { // ON condition with confidence steps
 
-            if (__step_freq_persistent((uint32_t)analysis->max_est_freq))
+            if (freq_peresist)
             {
-                if (__step_count == CONTROL_CONFIDENCE_STEP_COUNT)
+                if (__step_count >= CONTROL_CONFIDENCE_STEP_COUNT)
                 {
-                    __avg_energy.reset();
-                    __avg_standout.reset();
-
                     new_pwrfrq = PWRFRQ_VAL(__get_power_knob_val(), (uint32_t)analysis->max_est_freq);
-
-                    __step_count = 0;
-                } 
+                }
                 else
                 {
-                    __step_freq[__step_count++] = (uint32_t)analysis->max_est_freq;
+                    __step_count++;
                 }
             }
             else
             {
-                __step_count = 0;
+                // reset and increment
+                __step_count = 1;
             }
-        }
 
-        __avg_energy.add(analysis->energy);
-        __avg_standout.add(standout);
+            __avg_on_energy.add(analysis->energy);
+            __avg_on_standout.add(standout);
+        }
+        else
+        {
+            __avg_off_energy.add(analysis->energy);
+            __avg_off_standout.add(standout);
+        }
     }
 
     if (new_pwrfrq != cur_pwrfrq)
     {
         LOG("\n==========================================================\n");
-        LOG("max_mag: %f\n", analysis->max_mag);
         LOG("energy: %f\n", analysis->energy);
         LOG("max_mag: %f\n", analysis->max_mag);
         LOG("avg_mag: %f\n", analysis->avg_mag);
         LOG("standout: %f\n", standout);
         LOG("energy_step: %f\n", energy_step);
         LOG("standout_step: %f\n", standout_step);
-        LOG("avg energy: %f\n", __avg_energy.value());
-        LOG("avg standout: %f\n", __avg_standout.value());
+        LOG("step_score: %f\n", step_score);
+        LOG("avg_off_energy: %f\n", __avg_off_energy.value());
+        LOG("avg_off_standout: %f\n", __avg_off_standout.value());
+        LOG("avg_on_energy: %f\n", __avg_on_energy.value());
+        LOG("avg_on_standout: %f\n", __avg_on_standout.value());
         LOG("new_frq: %d\n", PWRFRQ_FRQ(new_pwrfrq));
         LOG("\n==========================================================\n");
     }
-
+    __prev_freq = analysis->max_est_freq;
     __pwrfrq.store(new_pwrfrq);
 
     xTaskNotifyGive(__control_task);
@@ -321,6 +388,7 @@ void control_init(void)
     __cur_mode.store(CTRL_MODE_STOP);
 
     __step_count = 0;
+    __prev_freq = 0;
 
     ret = xTaskCreatePinnedToCore(TASK_control_main, "CONTROL", CONTROL_TASK_STACK_SIZE, NULL, CONTROL_TASK_PRIORITY, &__control_task, CONTROL_TASK_CORE);
 
