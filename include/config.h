@@ -38,6 +38,7 @@
 /******************  ADC configuration  *****************/
 
 #define ADC_RESOLUTION        ADC_WIDTH_BIT_12
+#define ADC_MAX_VAL           4095
 
 #define ADC_ATTEN_SAMPLER     ADC_ATTEN_DB_11
 #define ADC_ATTEN_KNOB        ADC_ATTEN_DB_11
@@ -49,20 +50,31 @@
 #define CONTROL_TASK_STACK_SIZE 4096
 
 #define CONTROL_TIMER_FREQ 1000000UL
+
+#define CONTROL_MAX_OUTPUT_FREQ 500
+
 #define CONTROL_KNOB_UPDATE_FREQ 20
-
-#define CONTROL_ON_STEP_ENERGY 1.3f
-#define CONTROL_ON_STEP_STANDOUT 1.4f
-
-#define CONTROL_OFF_STEP_ENERGY 0.7f
-#define CONTROL_OFF_STEP_STANDOUT 0.7f
-
-#define CONTROL_MOVING_AVERAGE_SIZE 8
-
 #define CONTROL_AUDIO_UPDATE_FREQ 8
 
+#define CONTROL_MOVING_AVERAGE_SIZE 16
+
+#define CONTROL_PERSISTENT_FREQ_LIMIT 4
+
 #define CONTROL_CONFIDENCE_STEP_COUNT 1
-#define CONTROL_CONFIDENCE_FREQ_LIMIT 4
+
+#define CONTROL_WEIGHT_ENERGY 0.2
+#define CONTROL_WEIGHT_STANDOUT 0.8
+#define CONTROL_MULTILIER_PERSIST 1.1
+
+// <less-sensitive> - <more-sensitive>
+
+// 0.2 - 0.8
+#define CONTROL_SCORE_OFF_TH_BASE 0.2
+#define CONTROL_SCORE_OFF_TH_VAR 0.6
+
+// 3.5 - 1.5
+#define CONTROL_SCORE_ON_TH_BASE 3.5
+#define CONTROL_SCORE_ON_TH_VAR 2.0
 
 /************  audio sampler configuration  ************/
 
