@@ -12,7 +12,7 @@ void setup()
   log_init();
   gpio_init();
   control_init();
-  control_set_mode(CTRL_MODE_AUDIO);
+  control_set_mode(CTRL_MODE_AUDIO_FOLLOW);
 }
 
 void loop()

@@ -23,12 +23,14 @@ static float DMA_ATTR __fft_input_buffer[SAMPLER_FFT_SIZE];  // real FFT
 static float DMA_ATTR __fft_output_buffer[SAMPLER_FFT_SIZE]; // real FFT
 
 static fft_config_t DRAM_ATTR *__fft_config;
-static fft_callback_t __fft_callback;
+static fft_callback_t DRAM_ATTR __fft_callback;
 
 static TaskHandle_t DRAM_ATTR __sampler_task;
 
 static volatile std::atomic<uint32_t> DRAM_ATTR __enable_flag;
 static volatile std::atomic<uint32_t> DRAM_ATTR __proc_flag;
+
+static HWTimer DRAM_ATTR __timer;
 
 #if (SAMPLER_FFT_SIZE == 256)
 static DMA_ATTR float __fft_hanning_buffer[SAMPLER_FFT_SIZE / 2] = // half buffer because of window symmetry
@@ -193,6 +195,8 @@ static void __fft_process(fft_analysis_t *analysis)
 static void __sampler_task_init(void)
 {
     timer_init_t timer_init_data = {
+        .group = TIMER_GRP_SAMPLER,
+        .index = TIMER_IDX_SAMPLER,
         .config = {
             .alarm_en = TIMER_ALARM_EN,
             .counter_en = TIMER_PAUSE,
@@ -207,7 +211,7 @@ static void __sampler_task_init(void)
         .isr_arg = NULL,
     };
 
-    timer_init_simple(TIMER_GRP_SAMPLER, TIMER_IDX_SAMPLER, &timer_init_data);
+    __timer.init(timer_init_data);
 
     adc1_init_channel(ADC_CH_SAMPLER, ADC_ATTEN_SAMPLER);
 
@@ -245,12 +249,12 @@ static void TASK_sampler_main(void *param)
         if (__enable_flag.load())
         {
             // if timer is not running start it here
-            if (!timer_is_counting(TIMER_GRP_SAMPLER, TIMER_IDX_SAMPLER))
-                ESP_ERROR_CHECK(timer_start(TIMER_GRP_SAMPLER, TIMER_IDX_SAMPLER));
+            if (!__timer.counting())
+                __timer.start();
         }
         else
         {
-            ESP_ERROR_CHECK(timer_pause(TIMER_GRP_SAMPLER, TIMER_IDX_SAMPLER));
+            __timer.stop();
             __sample_index = 0;
         }
     }

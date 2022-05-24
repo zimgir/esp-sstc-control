@@ -6,6 +6,8 @@
 //#define PROFILING_ENABLE
 //#define SAMPLER_CHECK_TIMER
 //#define CONTROL_CHECK_TIMER
+//#define CONTROL_DEBUG_AUDIO_CTRL
+#define CONTROL_DEBUG_PWM
 
 /******************  clock frequency ******************/
 
@@ -15,12 +17,12 @@
 
 #define GPIO_ONBOARD_LED      2                  // GPIO[2]
 
-#define GPIO_DEBUG_OUT        13                 // GPIO[13]
+#define GPIO_DEBUG_OUT        23                 // GPIO[13]
 
 #define PORT_MODE_MASK        0xF0000            // GPIO[16:19]
 #define PORT_MODE_SHIFT       16
 
-#define GPIO_PWM_OUT          23                 // GPIO[23]
+#define GPIO_PWM_OUT          13                 // GPIO[23]
 
 #define ADC_CH_KNOB1          ADC1_CHANNEL_6     // GPIO[34]
 #define ADC_CH_KNOB2          ADC1_CHANNEL_7     // GPIO[35]
@@ -38,10 +40,16 @@
 /******************  ADC configuration  *****************/
 
 #define ADC_RESOLUTION        ADC_WIDTH_BIT_12
-#define ADC_MAX_VAL           4095
+#define ADC_MAX_VAL           4095 // ((1 << ADC_RESOLUTION) - 1)
 
 #define ADC_ATTEN_SAMPLER     ADC_ATTEN_DB_11
 #define ADC_ATTEN_KNOB        ADC_ATTEN_DB_11
+
+
+/******************  PWM configuration  *****************/
+
+#define PWM_TIMER_CONTROL     LEDC_TIMER_0
+#define PWM_CHANNEL_CONTROL   LEDC_CHANNEL_0
 
 /************  controller configuration  ************/
 
@@ -50,8 +58,6 @@
 #define CONTROL_TASK_STACK_SIZE 4096
 
 #define CONTROL_TIMER_FREQ 1000000UL
-
-#define CONTROL_MAX_OUTPUT_FREQ 500
 
 #define CONTROL_KNOB_UPDATE_FREQ 20
 #define CONTROL_AUDIO_UPDATE_FREQ 8
@@ -67,7 +73,6 @@
 #define CONTROL_MULTILIER_PERSIST 1.1
 
 // <less-sensitive> - <more-sensitive>
-
 // 0.2 - 0.8
 #define CONTROL_SCORE_OFF_TH_BASE 0.2
 #define CONTROL_SCORE_OFF_TH_VAR 0.6
@@ -75,6 +80,14 @@
 // 3.5 - 1.5
 #define CONTROL_SCORE_ON_TH_BASE 3.5
 #define CONTROL_SCORE_ON_TH_VAR 2.0
+
+#define CONTROL_PWM_RESOLUTION LEDC_TIMER_16_BIT // 16 bit available when frequency < 1kHz
+#define CONTROL_PWM_MAX_DUTY 65535 // ((1 << PWM_RESOLUTION) - 1)
+
+#define CONTROL_PWM_MAX_FREQ 500
+#define CONTROL_PWM_MAX_WIDTH_US 1000
+#define CONTROL_PWM_MAX_DUTY_PCNT 20
+#define CONTROL_PWM_DUTY_LIMIT (CONTROL_PWM_MAX_DUTY * CONTROL_PWM_MAX_DUTY_PCNT / 100)
 
 /************  audio sampler configuration  ************/
 

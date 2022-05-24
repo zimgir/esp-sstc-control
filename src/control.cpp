@@ -6,7 +6,7 @@
 
 #include "config.h"
 #include "utils.h"
-#include "ledc.h"
+#include "pwm.h"
 #include "adc.h"
 #include "timer.h"
 #include "sampler.h"
@@ -24,8 +24,11 @@ static MovingAverage<float, CONTROL_MOVING_AVERAGE_SIZE> DRAM_ATTR __avg_off_sta
 static MovingAverage<float, CONTROL_MOVING_AVERAGE_SIZE> DRAM_ATTR __avg_on_energy;
 static MovingAverage<float, CONTROL_MOVING_AVERAGE_SIZE> DRAM_ATTR __avg_on_standout;
 
-static float __prev_freq;
-static uint32_t __step_count;
+static float DRAM_ATTR __prev_freq;
+static uint32_t DRAM_ATTR __step_count;
+
+static HWTimer DRAM_ATTR __timer;
+static LEDCPWM DRAM_ATTR __pwm;
 
 static uint32_t __get_power_knob_val()
 {
@@ -56,7 +59,7 @@ static bool IRAM_ATTR ISR_timer_control(void *arg)
 
     power = __get_power_knob_val();
 
-    frequency = CONTROL_MAX_OUTPUT_FREQ * __get_freqency_knob_val() / ADC_MAX_VAL;
+    frequency = CONTROL_PWM_MAX_FREQ * __get_freqency_knob_val() / ADC_MAX_VAL;
 
     __pwrfrq.store(PWRFRQ_VAL(power, frequency));
 
@@ -214,6 +217,7 @@ static void __fft_callback(struct fft_analysis_t *analysis)
         }
     }
 
+#ifdef CONTROL_DEBUG_AUDIO_CTRL
     if (new_pwrfrq != cur_pwrfrq)
     {
         LOG("\n==========================================================\n");
@@ -231,34 +235,77 @@ static void __fft_callback(struct fft_analysis_t *analysis)
         LOG("new_frq: %d\n", PWRFRQ_FRQ(new_pwrfrq));
         LOG("\n==========================================================\n");
     }
+#endif
     __prev_freq = analysis->max_est_freq;
     __pwrfrq.store(new_pwrfrq);
+    __out_flag.store(1);
 
     xTaskNotifyGive(__control_task);
 }
 
+static uint32_t __control_pwm_duty(uint32_t power, uint32_t freq)
+{
+    uint32_t duty;
+    uint32_t max_duty;
+
+    // max duty from max wdith limit
+    // MAX_DUTY * (MAX_WIDTH_US / MAX_PERIOD_US)
+    // CONTROL_PWM_MAX_DUTY * CONTROL_PWM_MAX_WIDTH_US / (1000000 / freq)
+
+    max_duty = freq * (CONTROL_PWM_MAX_DUTY * CONTROL_PWM_MAX_WIDTH_US / 1000000);
+
+    if (max_duty > CONTROL_PWM_DUTY_LIMIT)
+        max_duty = CONTROL_PWM_DUTY_LIMIT;
+
+    duty = max_duty * power / ADC_MAX_VAL;
+
+    return duty;
+}
+
 static void __control_output(control_mode_t mode)
 {
+    uint32_t pwrfrq;
+    uint32_t power;
+    uint32_t freq;
+    uint32_t duty;
+
+    pwrfrq = __pwrfrq.load();
+    power = PWRFRQ_PWR(pwrfrq);
+    freq = PWRFRQ_FRQ(pwrfrq);
+
     switch (mode)
     {
     case CTRL_MODE_KNOBS:
+    case CTRL_MODE_AUDIO_FOLLOW:
     {
-        // sample knobs and update PWM
         break;
     }
-    case CTRL_MODE_AUDIO:
+    case CTRL_MODE_AUDIO_AUTOTUNE:
     {
-        // update PWM according to sampled values from sampler
+        // update autotune frequency
+        break;
+    }
+    case CTRL_MODE_AUDIO_POWER_CHORDS:
+    {
+        // update power chord frequency
         break;
     }
     default:
     {
-        // this case should not happen but stop output just in case it does
-        ESP_ERROR_CHECK(timer_pause(TIMER_GRP_CONTROL, TIMER_IDX_CONTROL));
+        // this case should not happen but stop all output just in case it does
+        __pwm.stop();
+        __timer.stop();
         sampler_stop();
-        break;
+        return;
     }
     }
+
+    if (freq > CONTROL_PWM_MAX_FREQ)
+        freq = CONTROL_PWM_MAX_FREQ;
+
+    duty = __control_pwm_duty(power, freq);
+
+    __pwm.output(duty, freq);
 }
 
 control_mode_t control_get_mode(void)
@@ -275,6 +322,8 @@ void control_set_mode(control_mode_t mode)
 static void __control_task_init(void)
 {
     timer_init_t timer_init_data = {
+        .group = TIMER_GRP_CONTROL,
+        .index = TIMER_IDX_CONTROL,
         .config = {
             .alarm_en = TIMER_ALARM_EN,
             .counter_en = TIMER_PAUSE,
@@ -289,7 +338,22 @@ static void __control_task_init(void)
         .isr_arg = NULL,
     };
 
-    timer_init_simple(TIMER_GRP_CONTROL, TIMER_IDX_CONTROL, &timer_init_data);
+    pwm_init_t pwm_init_data = {
+        .timer = {
+            .speed_mode = LEDC_HIGH_SPEED_MODE,
+            .duty_resolution = LEDC_TIMER_16_BIT,
+            .timer_num = PWM_TIMER_CONTROL,
+            .freq_hz = CONTROL_PWM_MAX_FREQ, // set max freq to check conflict with resolution
+            .clk_cfg = LEDC_USE_APB_CLK      // 80MHz
+        },
+        .channel = {.gpio_num = GPIO_PWM_OUT, .speed_mode = LEDC_HIGH_SPEED_MODE, .channel = PWM_CHANNEL_CONTROL, .intr_type = LEDC_INTR_DISABLE, .timer_sel = LEDC_TIMER_0,
+                    .duty = 0, // initial OFF state
+                    .hpoint = 0,
+                    .flags = {0}}};
+
+    __timer.init(timer_init_data);
+
+    __pwm.init(pwm_init_data);
 
     adc1_init_channel(ADC_CH_KNOB1, ADC_ATTEN_KNOB);
     adc1_init_channel(ADC_CH_KNOB2, ADC_ATTEN_KNOB);
@@ -304,16 +368,18 @@ static void __control_stop(control_mode_t mode)
     {
     case CTRL_MODE_KNOBS:
     {
-        ESP_ERROR_CHECK(timer_pause(TIMER_GRP_CONTROL, TIMER_IDX_CONTROL));
+        __timer.stop();
         break;
     }
-    case CTRL_MODE_AUDIO:
+    case CTRL_MODE_AUDIO_FOLLOW:
     {
         sampler_stop();
         break;
     }
     default:
     {
+        __timer.stop();
+        sampler_stop();
         break;
     }
     }
@@ -325,10 +391,10 @@ static control_mode_t __control_start(control_mode_t mode)
     {
     case CTRL_MODE_KNOBS:
     {
-        ESP_ERROR_CHECK(timer_start(TIMER_GRP_CONTROL, TIMER_IDX_CONTROL));
+        __timer.start();
         return mode;
     }
-    case CTRL_MODE_AUDIO:
+    case CTRL_MODE_AUDIO_FOLLOW:
     {
         sampler_start();
         return mode;
