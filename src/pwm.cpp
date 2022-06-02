@@ -16,10 +16,9 @@ void LEDCPWM::init(const pwm_init_t &init)
 
 void LEDCPWM::output(uint32_t duty, uint32_t freq)
 {
-    if (freq == 0 || duty == 0)
+    if (duty == 0)
     {
         __set_duty = 0;
-        __set_freq = 0;
         stop();
         return;
     }
@@ -30,28 +29,47 @@ void LEDCPWM::output(uint32_t duty, uint32_t freq)
         __is_paused = false;
     }
 
+    // conditionally update only if values updated to avoid same value update jitter
+
     if (freq >= __set_freq)
     {
         // if new frequency is higher then update matching duty first to stay within safe duty limits in higher frequency
         // otherwise old duty might go out of safe limits in higher frequency
-        ESP_ERROR_CHECK(ledc_set_duty(__speed_mode, __channel_id, duty));
-        ESP_ERROR_CHECK(ledc_update_duty(__speed_mode, __channel_id));
-        ESP_ERROR_CHECK(ledc_set_freq(__speed_mode, __timer_id, freq));
+
+        if(duty != __set_duty)
+        {
+            ESP_ERROR_CHECK(ledc_set_duty(__speed_mode, __channel_id, duty));
+            ESP_ERROR_CHECK(ledc_update_duty(__speed_mode, __channel_id));
+        } 
+
+        if(freq != __set_freq)
+        {
+            ESP_ERROR_CHECK(ledc_set_freq(__speed_mode, __timer_id, freq));
+        }
     }
     else
     {
         // if new frequency is lower then update frequency first to stay within safe duty limits in lower frequency
         // otherwise new duty might go out of safe limits in higher frequency
-        ESP_ERROR_CHECK(ledc_set_freq(__speed_mode, __timer_id, freq));
-        ESP_ERROR_CHECK(ledc_set_duty(__speed_mode, __channel_id, duty));
-        ESP_ERROR_CHECK(ledc_update_duty(__speed_mode, __channel_id));
+
+        if(freq != __set_freq)
+        {
+            ESP_ERROR_CHECK(ledc_set_freq(__speed_mode, __timer_id, freq));
+        }
+
+        if(duty != __set_duty)
+        {
+            ESP_ERROR_CHECK(ledc_set_duty(__speed_mode, __channel_id, duty));
+            ESP_ERROR_CHECK(ledc_update_duty(__speed_mode, __channel_id));
+        }       
+
     }
 
     __set_duty = duty;
     __set_freq = freq;
 
 #ifdef CONTROL_DEBUG_PWM
-    LOG("D: %lu F: %lu\n", __set_duty, __set_freq);
+    LOG("PWM D: %lu F: %lu\n", __set_duty, __set_freq);
 #endif
 }
 

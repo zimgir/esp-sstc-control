@@ -7,7 +7,9 @@
 //#define SAMPLER_CHECK_TIMER
 //#define CONTROL_CHECK_TIMER
 //#define CONTROL_DEBUG_AUDIO_CTRL
-#define CONTROL_DEBUG_PWM
+//#define CONTROL_DEBUG_MODE
+//#define CONTROL_DEBUG_KNOBS
+//#define CONTROL_DEBUG_PWM
 
 /******************  clock frequency ******************/
 
@@ -17,16 +19,20 @@
 
 #define GPIO_ONBOARD_LED      2                  // GPIO[2]
 
-#define GPIO_DEBUG_OUT        23                 // GPIO[13]
+#define GPIO_DEBUG_OUT        13                 // GPIO[13]
 
-#define PORT_MODE_MASK        0xF0000            // GPIO[16:19]
+#define GPIO_PORT0            16                 // GPIO[16]
+#define GPIO_PORT1            17                 // GPIO[17]
+#define GPIO_PORT2            18                 // GPIO[18]
+
+#define PORT_MODE_MASK        0x70000            // GPIO[16:18]
 #define PORT_MODE_SHIFT       16
 
-#define GPIO_PWM_OUT          13                 // GPIO[23]
+#define GPIO_PWM_OUT          23                 // GPIO[23]
 
 #define ADC_CH_KNOB1          ADC1_CHANNEL_6     // GPIO[34]
 #define ADC_CH_KNOB2          ADC1_CHANNEL_7     // GPIO[35]
-#define ADC_CH_SAMPLER        ADC1_CHANNEL_0     // GPIO[36]
+#define ADC_CH_SAMPLER        ADC1_CHANNEL_0     // GPIO[36] (SP)
 
 /******************  timer allocation  *****************/
 
@@ -59,10 +65,14 @@
 
 #define CONTROL_TIMER_FREQ 1000000UL
 
+// if knobs do not reach max ADC value due to biasing and resistor differences use this define to calculate range
+#define CONTROL_KNOB1_MAX_VAL 2880
+#define CONTROL_KNOB2_MAX_VAL 2800
+
 #define CONTROL_KNOB_UPDATE_FREQ 20
 #define CONTROL_AUDIO_UPDATE_FREQ 8
 
-#define CONTROL_MOVING_AVERAGE_SIZE 16
+#define CONTROL_MOVING_AVERAGE_SIZE 8
 
 #define CONTROL_PERSISTENT_FREQ_LIMIT 4
 
@@ -84,7 +94,10 @@
 #define CONTROL_PWM_RESOLUTION LEDC_TIMER_16_BIT // 16 bit available when frequency < 1kHz
 #define CONTROL_PWM_MAX_DUTY 65535 // ((1 << PWM_RESOLUTION) - 1)
 
+
+#define CONTROL_PWM_MIN_FREQ 40 // PWM unstable if it goes below 40 HZ
 #define CONTROL_PWM_MAX_FREQ 500
+
 #define CONTROL_PWM_MAX_WIDTH_US 1000
 #define CONTROL_PWM_MAX_DUTY_PCNT 20
 #define CONTROL_PWM_DUTY_LIMIT (CONTROL_PWM_MAX_DUTY * CONTROL_PWM_MAX_DUTY_PCNT / 100)

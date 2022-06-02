@@ -24,6 +24,10 @@ static MovingAverage<float, CONTROL_MOVING_AVERAGE_SIZE> DRAM_ATTR __avg_off_sta
 static MovingAverage<float, CONTROL_MOVING_AVERAGE_SIZE> DRAM_ATTR __avg_on_energy;
 static MovingAverage<float, CONTROL_MOVING_AVERAGE_SIZE> DRAM_ATTR __avg_on_standout;
 
+static MovingAverage<uint32_t, CONTROL_MOVING_AVERAGE_SIZE> DRAM_ATTR __avg_power;
+static MovingAverage<uint32_t, CONTROL_MOVING_AVERAGE_SIZE> DRAM_ATTR __avg_frequency;
+
+
 static float DRAM_ATTR __prev_freq;
 static uint32_t DRAM_ATTR __step_count;
 
@@ -32,14 +36,26 @@ static LEDCPWM DRAM_ATTR __pwm;
 
 static uint32_t __get_power_knob_val()
 {
-    // TODO
-    return 2048;
+    uint32_t sample;
+    sample = adc1_fast_sample(ADC_CH_KNOB1);
+#ifdef CONTROL_DEBUG_KNOBS
+    LOG("KNOB1: %d ", sample);
+#endif
+    // normalize to ADC_MAX_VAL acording to physical knob properties
+    sample = ADC_MAX_VAL * sample / CONTROL_KNOB1_MAX_VAL;
+    return sample;
 }
 
 static uint32_t __get_freqency_knob_val()
 {
-    // TODO
-    return 3480; // ~ 0.85
+    uint32_t sample;
+    sample = adc1_fast_sample(ADC_CH_KNOB2);
+#ifdef CONTROL_DEBUG_KNOBS
+    LOG("KNOB2: %d ", sample);
+#endif
+    // normalize to ADC_MAX_VAL acording to physical knob properties
+    sample = ADC_MAX_VAL * sample / CONTROL_KNOB2_MAX_VAL;
+    return sample;
 }
 
 static bool IRAM_ATTR ISR_timer_control(void *arg)
@@ -58,10 +74,13 @@ static bool IRAM_ATTR ISR_timer_control(void *arg)
 #endif
 
     power = __get_power_knob_val();
-
     frequency = CONTROL_PWM_MAX_FREQ * __get_freqency_knob_val() / ADC_MAX_VAL;
 
-    __pwrfrq.store(PWRFRQ_VAL(power, frequency));
+    // smooth out noise with moving average to reduce jitter
+    __avg_power.add(power);
+    __avg_frequency.add(frequency);
+
+    __pwrfrq.store(PWRFRQ_VAL(__avg_power.value(), __avg_frequency.value()));
 
     // signal output event
     __out_flag.store(1);
@@ -262,6 +281,13 @@ static uint32_t __control_pwm_duty(uint32_t power, uint32_t freq)
     return duty;
 }
 
+static void __control_stop()
+{
+    __pwm.stop();
+    __timer.stop();
+    sampler_stop();
+}
+
 static void __control_output(control_mode_t mode)
 {
     uint32_t pwrfrq;
@@ -293,12 +319,13 @@ static void __control_output(control_mode_t mode)
     default:
     {
         // this case should not happen but stop all output just in case it does
-        __pwm.stop();
-        __timer.stop();
-        sampler_stop();
+        __control_stop();
         return;
     }
     }
+
+    if(freq < CONTROL_PWM_MIN_FREQ)
+        freq = CONTROL_PWM_MIN_FREQ;
 
     if (freq > CONTROL_PWM_MAX_FREQ)
         freq = CONTROL_PWM_MAX_FREQ;
@@ -361,47 +388,24 @@ static void __control_task_init(void)
     sampler_init(__fft_callback);
 }
 
-static void __control_stop(control_mode_t mode)
-{
-
-    switch (mode)
-    {
-    case CTRL_MODE_KNOBS:
-    {
-        __timer.stop();
-        break;
-    }
-    case CTRL_MODE_AUDIO_FOLLOW:
-    {
-        sampler_stop();
-        break;
-    }
-    default:
-    {
-        __timer.stop();
-        sampler_stop();
-        break;
-    }
-    }
-}
-
-static control_mode_t __control_start(control_mode_t mode)
+void __control_start(control_mode_t mode)
 {
     switch (mode)
     {
     case CTRL_MODE_KNOBS:
     {
         __timer.start();
-        return mode;
+        break;
     }
     case CTRL_MODE_AUDIO_FOLLOW:
     {
         sampler_start();
-        return mode;
+        break;
     }
     default:
     {
-        return CTRL_MODE_STOP;
+        __control_stop();
+        break;
     }
     }
 }
@@ -435,11 +439,13 @@ static void TASK_control_main(void *param)
 
         if (new_mode != old_mode)
         {
-            __control_stop(old_mode);
-            new_mode = __control_start(new_mode);
-            LOG("Start control mode: %d\n", new_mode);
+            __control_stop();
+            __control_start(new_mode);
             __cur_mode.store(new_mode);
             __set_mode.store(new_mode);
+#ifdef CONTROL_DEBUG_MODE
+            LOG("mode: old: %d new: %d\n", old_mode, new_mode);
+#endif
         }
     }
 }
