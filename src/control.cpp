@@ -13,7 +13,7 @@
 #include "control.h"
 
 static TaskHandle_t DRAM_ATTR __control_task;
-static volatile std::atomic<uint32_t> DRAM_ATTR __pwrfrq;
+static volatile std::atomic<uint32_t> DRAM_ATTR __volfrq;
 static volatile std::atomic<uint32_t> DRAM_ATTR __out_flag;
 static volatile std::atomic<control_mode_t> DRAM_ATTR __set_mode;
 static volatile std::atomic<control_mode_t> DRAM_ATTR __cur_mode;
@@ -24,7 +24,7 @@ static MovingAverage<float, CONTROL_MOVING_AVERAGE_SIZE> DRAM_ATTR __avg_off_sta
 static MovingAverage<float, CONTROL_MOVING_AVERAGE_SIZE> DRAM_ATTR __avg_on_energy;
 static MovingAverage<float, CONTROL_MOVING_AVERAGE_SIZE> DRAM_ATTR __avg_on_standout;
 
-static MovingAverage<uint32_t, CONTROL_MOVING_AVERAGE_SIZE> DRAM_ATTR __avg_power;
+static MovingAverage<uint32_t, CONTROL_MOVING_AVERAGE_SIZE> DRAM_ATTR __avg_volume;
 static MovingAverage<uint32_t, CONTROL_MOVING_AVERAGE_SIZE> DRAM_ATTR __avg_frequency;
 
 
@@ -34,33 +34,33 @@ static uint32_t DRAM_ATTR __step_count;
 static HWTimer DRAM_ATTR __timer;
 static LEDCPWM DRAM_ATTR __pwm;
 
-static uint32_t __get_power_knob_val()
+static uint32_t __get_volume_knob_val()
 {
     uint32_t sample;
-    sample = adc1_fast_sample(ADC_CH_KNOB1);
-#ifdef CONTROL_DEBUG_KNOBS
-    LOG("KNOB1: %d ", sample);
+    sample = adc1_fast_sample(ADC_CH_KNOB_VOL);
+#ifdef CONTROL_DEBUG_KNOB_VOL
+    LOG("KNOB VOL: %d\n", sample);
 #endif
     // normalize to ADC_MAX_VAL acording to physical knob properties
-    sample = ADC_MAX_VAL * sample / CONTROL_KNOB1_MAX_VAL;
+    sample = ADC_MAX_VAL * sample / CONTROL_KNOB_VOL_MAX_VAL;
     return sample;
 }
 
 static uint32_t __get_freqency_knob_val()
 {
     uint32_t sample;
-    sample = adc1_fast_sample(ADC_CH_KNOB2);
-#ifdef CONTROL_DEBUG_KNOBS
-    LOG("KNOB2: %d ", sample);
+    sample = adc1_fast_sample(ADC_CH_KNOB_FRQ);
+#ifdef CONTROL_DEBUG_KNOB_FRQ
+    LOG("KNOB FRQ: %d\n", sample);
 #endif
     // normalize to ADC_MAX_VAL acording to physical knob properties
-    sample = ADC_MAX_VAL * sample / CONTROL_KNOB2_MAX_VAL;
+    sample = ADC_MAX_VAL * sample / CONTROL_KNOB_FRQ_MAX_VAL;
     return sample;
 }
 
 static bool IRAM_ATTR ISR_timer_control(void *arg)
 {
-    uint32_t power;
+    uint32_t volume;
     uint32_t frequency;
     BaseType_t task_awake = pdFALSE;
 
@@ -73,14 +73,14 @@ static bool IRAM_ATTR ISR_timer_control(void *arg)
     state = ~state;
 #endif
 
-    power = __get_power_knob_val();
+    volume = __get_volume_knob_val();
     frequency = CONTROL_PWM_MAX_FREQ * __get_freqency_knob_val() / ADC_MAX_VAL;
 
     // smooth out noise with moving average to reduce jitter
-    __avg_power.add(power);
+    __avg_volume.add(volume);
     __avg_frequency.add(frequency);
 
-    __pwrfrq.store(PWRFRQ_VAL(__avg_power.value(), __avg_frequency.value()));
+    __volfrq.store(VOLFRQ_VAL(__avg_volume.value(), __avg_frequency.value()));
 
     // signal output event
     __out_flag.store(1);
@@ -95,8 +95,8 @@ static int __is_persistent_freq(float new_freq)
 {
     int i;
 
-    if (new_freq < (__prev_freq - CONTROL_PERSISTENT_FREQ_LIMIT) ||
-        new_freq > (__prev_freq + CONTROL_PERSISTENT_FREQ_LIMIT))
+    if (new_freq < (__prev_freq - CONTROL_PERSISTENT_FREQ_TOLERANCE) ||
+        new_freq > (__prev_freq + CONTROL_PERSISTENT_FREQ_TOLERANCE))
         return 0;
 
     return 1;
@@ -116,17 +116,18 @@ static void __fft_callback(struct fft_analysis_t *analysis)
     float on_threshold;
     float off_threshold;
 
-    uint32_t cur_pwrfrq;
-    uint32_t new_pwrfrq;
+    uint32_t cur_volfrq;
+    uint32_t new_volfrq;
 
     standout = analysis->max_mag - analysis->avg_mag;
 
-    cur_pwrfrq = __pwrfrq.load();
-    new_pwrfrq = cur_pwrfrq;
+    cur_volfrq = __volfrq.load();
+    new_volfrq = cur_volfrq;
 
-    if (cur_pwrfrq != 0)
+    if (cur_volfrq != 0)
     { // ON state
 
+        // handle initial case
         if (unlikely(__avg_on_energy.num() == 0))
         {
             BUG(__avg_on_standout.num() != 0);
@@ -150,31 +151,16 @@ static void __fft_callback(struct fft_analysis_t *analysis)
                         CONTROL_SCORE_OFF_TH_VAR * ((float)__get_freqency_knob_val() / ADC_MAX_VAL);
 
         if (step_score < off_threshold)
-        { // OFF condition immediately without confidence steps
+        { // switch OFF
 
-            new_pwrfrq = 0;
+            new_volfrq = 0;
             __avg_off_energy.add(analysis->energy);
             __avg_off_standout.add(standout);
         }
         else
-        { // update frequency with confidence steps
+        { // update ON frequency
 
-            if (freq_peresist)
-            {
-                if (__step_count >= CONTROL_CONFIDENCE_STEP_COUNT)
-                {
-                    new_pwrfrq = PWRFRQ_VAL(__get_power_knob_val(), (uint32_t)analysis->max_est_freq);
-                }
-                else
-                {
-                    __step_count++;
-                }
-            }
-            else
-            {
-                // reset and increment
-                __step_count = 1;
-            }
+            new_volfrq = VOLFRQ_VAL(__get_volume_knob_val(), (uint32_t)analysis->max_est_freq);
 
             __avg_on_energy.add(analysis->energy);
             __avg_on_standout.add(standout);
@@ -207,37 +193,22 @@ static void __fft_callback(struct fft_analysis_t *analysis)
                        CONTROL_SCORE_ON_TH_VAR * ((float)__get_freqency_knob_val() / ADC_MAX_VAL);
 
         if (step_score >= on_threshold)
-        { // ON condition with confidence steps
+        { // switch ON and update frequency
 
-            if (freq_peresist)
-            {
-                if (__step_count >= CONTROL_CONFIDENCE_STEP_COUNT)
-                {
-                    new_pwrfrq = PWRFRQ_VAL(__get_power_knob_val(), (uint32_t)analysis->max_est_freq);
-                }
-                else
-                {
-                    __step_count++;
-                }
-            }
-            else
-            {
-                // reset and increment
-                __step_count = 1;
-            }
+            new_volfrq = VOLFRQ_VAL(__get_volume_knob_val(), (uint32_t)analysis->max_est_freq);
 
             __avg_on_energy.add(analysis->energy);
             __avg_on_standout.add(standout);
         }
         else
-        {
+        { // stay OFF but update moving averages
             __avg_off_energy.add(analysis->energy);
             __avg_off_standout.add(standout);
         }
     }
 
 #ifdef CONTROL_DEBUG_AUDIO_CTRL
-    if (new_pwrfrq != cur_pwrfrq)
+    if (new_volfrq != cur_volfrq)
     {
         LOG("\n==========================================================\n");
         LOG("energy: %f\n", analysis->energy);
@@ -251,18 +222,18 @@ static void __fft_callback(struct fft_analysis_t *analysis)
         LOG("avg_off_standout: %f\n", __avg_off_standout.value());
         LOG("avg_on_energy: %f\n", __avg_on_energy.value());
         LOG("avg_on_standout: %f\n", __avg_on_standout.value());
-        LOG("new_frq: %d\n", PWRFRQ_FRQ(new_pwrfrq));
+        LOG("new_frq: %d\n", VOLFRQ_FRQ(new_volfrq));
         LOG("\n==========================================================\n");
     }
 #endif
     __prev_freq = analysis->max_est_freq;
-    __pwrfrq.store(new_pwrfrq);
+    __volfrq.store(new_volfrq);
     __out_flag.store(1);
 
     xTaskNotifyGive(__control_task);
 }
 
-static uint32_t __control_pwm_duty(uint32_t power, uint32_t freq)
+static uint32_t __control_pwm_duty(uint32_t volume, uint32_t freq)
 {
     uint32_t duty;
     uint32_t max_duty;
@@ -276,7 +247,7 @@ static uint32_t __control_pwm_duty(uint32_t power, uint32_t freq)
     if (max_duty > CONTROL_PWM_DUTY_LIMIT)
         max_duty = CONTROL_PWM_DUTY_LIMIT;
 
-    duty = max_duty * power / ADC_MAX_VAL;
+    duty = max_duty * volume / ADC_MAX_VAL;
 
     return duty;
 }
@@ -290,14 +261,14 @@ static void __control_stop()
 
 static void __control_output(control_mode_t mode)
 {
-    uint32_t pwrfrq;
-    uint32_t power;
+    uint32_t volfrq;
+    uint32_t volume;
     uint32_t freq;
     uint32_t duty;
 
-    pwrfrq = __pwrfrq.load();
-    power = PWRFRQ_PWR(pwrfrq);
-    freq = PWRFRQ_FRQ(pwrfrq);
+    volfrq = __volfrq.load();
+    volume = VOLFRQ_PWR(volfrq);
+    freq = VOLFRQ_FRQ(volfrq);
 
     switch (mode)
     {
@@ -330,7 +301,7 @@ static void __control_output(control_mode_t mode)
     if (freq > CONTROL_PWM_MAX_FREQ)
         freq = CONTROL_PWM_MAX_FREQ;
 
-    duty = __control_pwm_duty(power, freq);
+    duty = __control_pwm_duty(volume, freq);
 
     __pwm.output(duty, freq);
 }
@@ -382,8 +353,8 @@ static void __control_task_init(void)
 
     __pwm.init(pwm_init_data);
 
-    adc1_init_channel(ADC_CH_KNOB1, ADC_ATTEN_KNOB);
-    adc1_init_channel(ADC_CH_KNOB2, ADC_ATTEN_KNOB);
+    adc1_init_channel(ADC_CH_KNOB_VOL, ADC_ATTEN_KNOB);
+    adc1_init_channel(ADC_CH_KNOB_FRQ, ADC_ATTEN_KNOB);
 
     sampler_init(__fft_callback);
 }
@@ -454,7 +425,7 @@ void control_init(void)
 {
     BaseType_t ret;
 
-    __pwrfrq.store(0);
+    __volfrq.store(0);
     __out_flag.store(0);
     __set_mode.store(CTRL_MODE_STOP);
     __cur_mode.store(CTRL_MODE_STOP);

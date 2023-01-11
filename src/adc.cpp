@@ -49,6 +49,8 @@
   temp_reg.reg_field;                                        \
 })
 
+static portMUX_TYPE __adc1_spinlock = portMUX_INITIALIZER_UNLOCKED;
+
 
 void adc1_init()
 {
@@ -71,6 +73,9 @@ IRAM_ATTR is applied so that function could be called from ISR if necessary */
 uint16_t IRAM_ATTR adc1_fast_sample(adc1_channel_t channel)
 {
   uint16_t raw_sample;
+
+  // lock the spinlock so this function would be safe for multicore usage
+  portENTER_CRITICAL(&__adc1_spinlock);
 
   // power ON ADC
   SENS.sar_meas_wait2.force_xpd_sar = SENS_FORCE_XPD_SAR_PU;
@@ -111,6 +116,8 @@ uint16_t IRAM_ATTR adc1_fast_sample(adc1_channel_t channel)
 
   // read result
   raw_sample = HAL_FORCE_READ_U32_REG_FIELD(SENS.sar_meas_start1, meas1_data_sar);
+
+  portEXIT_CRITICAL(&__adc1_spinlock);
 
   return raw_sample;
 }

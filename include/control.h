@@ -3,9 +3,9 @@
 
 #include <stdint.h>
 
-#define PWRFRQ_VAL(pwr, freq) ((((pwr) & 0xFFFF) << 16) | ((freq) & 0xFFFF))
-#define PWRFRQ_PWR(val) ((val) >> 16)
-#define PWRFRQ_FRQ(val) ((val) & 0xFFFF)
+#define VOLFRQ_VAL(pwr, freq) ((((pwr) & 0xFFFF) << 16) | ((freq) & 0xFFFF))
+#define VOLFRQ_PWR(val) ((val) >> 16)
+#define VOLFRQ_FRQ(val) ((val) & 0xFFFF)
 
 typedef enum {
     CTRL_MODE_STOP,
