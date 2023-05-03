@@ -267,7 +267,7 @@ static void __control_output(control_mode_t mode)
     uint32_t duty;
 
     volfrq = __volfrq.load();
-    volume = VOLFRQ_PWR(volfrq);
+    volume = VOLFRQ_VOL(volfrq);
     freq = VOLFRQ_FRQ(volfrq);
 
     switch (mode)

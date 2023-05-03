@@ -3,8 +3,8 @@
 
 #include <stdint.h>
 
-#define VOLFRQ_VAL(pwr, freq) ((((pwr) & 0xFFFF) << 16) | ((freq) & 0xFFFF))
-#define VOLFRQ_PWR(val) ((val) >> 16)
+#define VOLFRQ_VAL(vol, freq) ((((vol) & 0xFFFF) << 16) | ((freq) & 0xFFFF))
+#define VOLFRQ_VOL(val) ((val) >> 16)
 #define VOLFRQ_FRQ(val) ((val) & 0xFFFF)
 
 typedef enum {
