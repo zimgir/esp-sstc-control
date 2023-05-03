@@ -16,7 +16,7 @@
 #include "timer.h"
 #include "sampler.h"
 
-static uint32_t DRAM_ATTR __sample_index;
+static volatile uint32_t DRAM_ATTR __sample_index;
 static uint16_t DMA_ATTR __sample_buffer[SAMPLER_FFT_SIZE * 2]; // double buffer scheme
 
 static float DMA_ATTR __fft_input_buffer[SAMPLER_FFT_SIZE];  // real FFT
@@ -71,7 +71,7 @@ static bool IRAM_ATTR ISR_timer_sample(void *arg)
 
     // it seems ISR can't handle float buffer and crashes if it is float
     __sample_buffer[__sample_index] = sample;
-    __sample_index = (__sample_index + 1) % (sizeof(__sample_buffer) / sizeof(__sample_buffer[0]));
+    __sample_index = (__sample_index + 1) % ARRAY_SIZE(__sample_buffer);
 
     // double buffer switch event
     if (__sample_index == SAMPLER_FFT_SIZE || __sample_index == 0)

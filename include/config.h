@@ -11,6 +11,7 @@
 //#define CONTROL_DEBUG_KNOB_VOL
 //#define CONTROL_DEBUG_KNOB_FRQ
 //#define CONTROL_DEBUG_PWM
+//#define CONTROL_DEBUG_PROGRAM
 
 /******************  clock frequency ******************/
 
@@ -42,6 +43,9 @@
 
 #define TIMER_GRP_CONTROL    TIMER_GROUP_1
 #define TIMER_IDX_CONTROL    TIMER_0
+
+#define TIMER_GRP_ONESHOT    TIMER_GROUP_1
+#define TIMER_IDX_ONESHOT    TIMER_1
 
 
 /******************  ADC configuration  *****************/

@@ -30,6 +30,13 @@ void HWTimer::stop()
     ESP_ERROR_CHECK(timer_pause(__group_id, __timer_id));
 }
 
+void HWTimer::reload(uint64_t ticks)
+{
+    ESP_ERROR_CHECK(timer_set_counter_value(__group_id, __timer_id, 0));
+    ESP_ERROR_CHECK(timer_set_alarm_value(__group_id, __timer_id, ticks));
+    ESP_ERROR_CHECK(timer_set_alarm(__group_id, __timer_id, TIMER_ALARM_EN));
+}
+
 bool HWTimer::counting()
 {
     timer_config_t config;

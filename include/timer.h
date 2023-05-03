@@ -30,6 +30,7 @@ public:
     void init(const timer_init_t &init);
     void start();
     void stop();
+    void reload(uint64_t ticks);
     bool counting();
 
 private:

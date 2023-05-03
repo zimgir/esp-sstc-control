@@ -31,8 +31,73 @@ static MovingAverage<uint32_t, CONTROL_MOVING_AVERAGE_SIZE> DRAM_ATTR __avg_freq
 static float DRAM_ATTR __prev_freq;
 static uint32_t DRAM_ATTR __step_count;
 
+static HWTimer DRAM_ATTR __oneshot;
 static HWTimer DRAM_ATTR __timer;
 static LEDCPWM DRAM_ATTR __pwm;
+
+static volatile uint32_t DRAM_ATTR __prog_idx;
+
+typedef struct {
+    uint16_t freq;
+    uint16_t dur_ms;
+} program_note_t;
+
+const program_note_t __program[] = {
+   {     0,   428, } , // note 0
+   {   329,   321, } , // note 1
+   {     0,   107, } , // note 2
+   {   246,   214, } , // note 3
+   {   261,   214, } , // note 4
+   {   293,   214, } , // note 5
+   {   329,   107, } , // note 6
+   {   293,   107, } , // note 7
+   {   261,   214, } , // note 8
+   {   246,   214, } , // note 9
+   {   220,   107, } , // note 10
+   {     0,   107, } , // note 11
+   {   220,   214, } , // note 12
+   {   246,   214, } , // note 13
+   {   261,   214, } , // note 14
+   {   329,   428, } , // note 15
+   {   293,   214, } , // note 16
+   {   261,   214, } , // note 17
+   {   246,   214, } , // note 18
+   {     0,   214, } , // note 19
+   {   246,   214, } , // note 20
+   {   261,   214, } , // note 21
+   {   293,   428, } , // note 22
+   {   329,   428, } , // note 23
+   {   261,   428, } , // note 24
+   {   220,   214, } , // note 25
+   {     0,   214, } , // note 26
+   {   220,   428, } , // note 27
+   {     0,   642, } , // note 28
+   {   349,   428, } , // note 29
+   {   391,   214, } , // note 30
+   {   440,   107, } , // note 31
+   {     0,   107, } , // note 32
+   {   440,   214, } , // note 33
+   {   391,   214, } , // note 34
+   {   349,   214, } , // note 35
+   {   440,   214, } , // note 36
+   {   329,   107, } , // note 37
+   {     0,   107, } , // note 38
+   {   329,   214, } , // note 39
+   {   349,   214, } , // note 40
+   {   329,   428, } , // note 41
+   {   293,   214, } , // note 42
+   {   261,   214, } , // note 43
+   {   246,   214, } , // note 44
+   {   220,   214, } , // note 45
+   {   246,   214, } , // note 46
+   {   261,   214, } , // note 47
+   {   293,   428, } , // note 48
+   {   329,   428, } , // note 49
+   {   261,   428, } , // note 50
+   {   220,   214, } , // note 51
+   {     0,   214, } , // note 52
+   {   220,   428, } , // note 53
+};
 
 static uint32_t __get_volume_knob_val()
 {
@@ -56,6 +121,50 @@ static uint32_t __get_freqency_knob_val()
     // normalize to ADC_MAX_VAL acording to physical knob properties
     sample = ADC_MAX_VAL * sample / CONTROL_KNOB_FRQ_MAX_VAL;
     return sample;
+}
+
+static void __program_start() 
+{
+    // restart program
+    __prog_idx = 0;
+
+#ifdef CONTROL_DEBUG_PROGRAM
+    LOG("PROG N: %d F: %d T: %d\n", 
+    __prog_idx,
+    __program[__prog_idx].freq,
+    __program[__prog_idx].dur_ms);
+#endif
+
+    // signal first program note output event
+    __volfrq.store(VOLFRQ_VAL(__get_volume_knob_val(), __program[__prog_idx].freq));
+    __out_flag.store(1);
+
+    // oneshot timer frequency is 1 MHz so 1 tick is 1 us - convert ms to us
+    __oneshot.reload(__program[__prog_idx].dur_ms * 1000);
+    __oneshot.start();
+}
+
+static bool IRAM_ATTR ISR_oneshot_control(void *arg)
+{
+    BaseType_t task_awake = pdFALSE;
+
+    __prog_idx = (__prog_idx + 1) % ARRAY_SIZE(__program);
+
+#ifdef CONTROL_DEBUG_PROGRAM
+    LOG("PROG N: %d F: %d T: %d\n",
+    __prog_idx, 
+    __program[__prog_idx].freq,
+    __program[__prog_idx].dur_ms);
+#endif
+
+    // signal next program note output event
+    __volfrq.store(VOLFRQ_VAL(__get_volume_knob_val(), __program[__prog_idx].freq));
+    __out_flag.store(1);
+
+    // wake up task for PWM update
+    vTaskNotifyGiveFromISR(__control_task, &task_awake);
+
+    return task_awake == pdTRUE;
 }
 
 static bool IRAM_ATTR ISR_timer_control(void *arg)
@@ -256,7 +365,35 @@ static void __control_stop()
 {
     __pwm.stop();
     __timer.stop();
+    __oneshot.stop();
     sampler_stop();
+}
+
+void __control_start(control_mode_t mode)
+{
+    switch (mode)
+    {
+    case CTRL_MODE_KNOBS:
+    {
+        __timer.start();
+        break;
+    }
+    case CTRL_MODE_AUDIO_FOLLOW:
+    {
+        sampler_start();
+        break;
+    }
+    case CTRL_MODE_PROGRAM:
+    {
+        __program_start();
+        break;
+    }
+    default:
+    {
+        __control_stop();
+        break;
+    }
+    }
 }
 
 static void __control_output(control_mode_t mode)
@@ -277,14 +414,11 @@ static void __control_output(control_mode_t mode)
     {
         break;
     }
-    case CTRL_MODE_AUDIO_AUTOTUNE:
+    case CTRL_MODE_PROGRAM:
     {
-        // update autotune frequency
-        break;
-    }
-    case CTRL_MODE_AUDIO_POWER_CHORDS:
-    {
-        // update power chord frequency
+        // reload program timer
+        __oneshot.reload(__program[__prog_idx].dur_ms * 1000);
+        __oneshot.start();
         break;
     }
     default:
@@ -294,11 +428,12 @@ static void __control_output(control_mode_t mode)
         return;
     }
     }
-
-    if(freq < CONTROL_PWM_MIN_FREQ)
+      
+    if(freq == 0)
+        volume = 0;
+    else if(freq < CONTROL_PWM_MIN_FREQ)
         freq = CONTROL_PWM_MIN_FREQ;
-
-    if (freq > CONTROL_PWM_MAX_FREQ)
+    else if (freq > CONTROL_PWM_MAX_FREQ)
         freq = CONTROL_PWM_MAX_FREQ;
 
     duty = __control_pwm_duty(volume, freq);
@@ -306,19 +441,25 @@ static void __control_output(control_mode_t mode)
     __pwm.output(duty, freq);
 }
 
-control_mode_t control_get_mode(void)
-{
-    return __cur_mode.load();
-}
-
-void control_set_mode(control_mode_t mode)
-{
-    __set_mode.store(mode);
-    xTaskNotifyGive(__control_task);
-}
-
 static void __control_task_init(void)
 {
+    timer_init_t oneshot_init_data = {
+        .group = TIMER_GRP_ONESHOT,
+        .index = TIMER_IDX_ONESHOT,
+        .config = {
+            .alarm_en = TIMER_ALARM_EN,
+            .counter_en = TIMER_PAUSE,
+            .intr_type = TIMER_INTR_LEVEL,
+            .counter_dir = TIMER_COUNT_UP,
+            .auto_reload = TIMER_AUTORELOAD_DIS,
+            .divider = TIMER_DIVIDER(CONTROL_TIMER_FREQ),
+        },
+        .count = 0,
+        .alarm = TIMER_ALARM_COUNT(CONTROL_TIMER_FREQ, CONTROL_KNOB_UPDATE_FREQ),
+        .isr_func = ISR_oneshot_control,
+        .isr_arg = NULL,
+    };
+
     timer_init_t timer_init_data = {
         .group = TIMER_GRP_CONTROL,
         .index = TIMER_IDX_CONTROL,
@@ -349,36 +490,15 @@ static void __control_task_init(void)
                     .hpoint = 0,
                     .flags = {0}}};
 
-    __timer.init(timer_init_data);
 
+    __oneshot.init(oneshot_init_data);
+    __timer.init(timer_init_data);
     __pwm.init(pwm_init_data);
 
     adc1_init_channel(ADC_CH_KNOB_VOL, ADC_ATTEN_KNOB);
     adc1_init_channel(ADC_CH_KNOB_FRQ, ADC_ATTEN_KNOB);
 
     sampler_init(__fft_callback);
-}
-
-void __control_start(control_mode_t mode)
-{
-    switch (mode)
-    {
-    case CTRL_MODE_KNOBS:
-    {
-        __timer.start();
-        break;
-    }
-    case CTRL_MODE_AUDIO_FOLLOW:
-    {
-        sampler_start();
-        break;
-    }
-    default:
-    {
-        __control_stop();
-        break;
-    }
-    }
 }
 
 static void TASK_control_main(void *param)
@@ -421,6 +541,17 @@ static void TASK_control_main(void *param)
     }
 }
 
+control_mode_t control_get_mode(void)
+{
+    return __cur_mode.load();
+}
+
+void control_set_mode(control_mode_t mode)
+{
+    __set_mode.store(mode);
+    xTaskNotifyGive(__control_task);
+}
+
 void control_init(void)
 {
     BaseType_t ret;
@@ -432,6 +563,8 @@ void control_init(void)
 
     __step_count = 0;
     __prev_freq = 0;
+
+    __prog_idx = 0;
 
     ret = xTaskCreatePinnedToCore(TASK_control_main, "CONTROL", CONTROL_TASK_STACK_SIZE, NULL, CONTROL_TASK_PRIORITY, &__control_task, CONTROL_TASK_CORE);
 
